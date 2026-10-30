@@ -235,6 +235,37 @@ struct Point p;
 }
 
 #[test]
+fn comments_inside_struct_and_enum() {
+    check(
+        r#"
+struct Point {
+    int x; /* x coord */
+    /* y comment */
+    int y;
+};
+enum Color {
+    RED, /* red */
+    GREEN,
+};
+"#,
+        &[
+            "STRUCT Point",
+            "    INIT int x",
+            "    /* x coord */",
+            "    /* y comment */",
+            "    INIT int y",
+            "END STRUCT",
+            "",
+            "ENUM Color",
+            "    RED",
+            "    /* red */",
+            "    GREEN",
+            "END ENUM",
+        ],
+    );
+}
+
+#[test]
 fn pointers_and_members() {
     check(
         r#"

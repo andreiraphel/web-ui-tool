@@ -791,6 +791,10 @@ impl Parser {
         while !self.eof() && !self.check("}") {
             let before = self.pos;
             self.preserve_blank_lines();
+            if self.peek_is_comment() {
+                self.emit_comment();
+                continue;
+            }
             if self.eat(";") {
                 continue;
             }
@@ -804,6 +808,7 @@ impl Parser {
                 self.source_indent = toks[0].indent;
                 self.emit_declaration_tokens(&toks);
             }
+            self.emit_comments();
             if self.pos == before {
                 self.pos += 1;
             }
@@ -814,6 +819,10 @@ impl Parser {
         while !self.eof() && !self.check("}") {
             let before = self.pos;
             self.preserve_blank_lines();
+            if self.peek_is_comment() {
+                self.emit_comment();
+                continue;
+            }
             let toks = self.take_until_top_level(&[",", "}"]);
             if !toks.is_empty() {
                 self.source_indent = toks[0].indent;
