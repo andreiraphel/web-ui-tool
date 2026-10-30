@@ -258,6 +258,38 @@ int main(void) {
 }
 
 #[test]
+fn conditional_preprocessor() {
+    check(
+        r#"
+#ifdef DEBUG
+int x = 1;
+#else
+int x = 2;
+#endif
+#if defined(FOO) && !defined(BAR)
+int y = 3;
+#endif
+#ifndef LIMIT
+int z = 4;
+#endif
+"#,
+        &[
+            "#IFDEF DEBUG",
+            "INIT int x TO 1",
+            "#ELSE",
+            "INIT int x TO 2",
+            "#ENDIF",
+            "#IF DEFINED(FOO) && !DEFINED(BAR)",
+            "INIT int y TO 3",
+            "#ENDIF",
+            "#IFNDEF LIMIT",
+            "INIT int z TO 4",
+            "#ENDIF",
+        ],
+    );
+}
+
+#[test]
 fn while_break_continue() {
     check(
         r#"

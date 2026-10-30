@@ -7,6 +7,33 @@ use super::format::{
 use super::rules::Rules;
 use super::{ConvertError, Kind, Token, is_qualifier, is_struct_like, is_type_word};
 
+fn uppercase_defined(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find("defined") {
+        let before_word = rest[..pos]
+            .chars()
+            .next_back()
+            .map(|c| c.is_alphanumeric() || c == '_')
+            .unwrap_or(false);
+        let after = &rest[pos + "defined".len()..];
+        let after_word = after
+            .chars()
+            .next()
+            .map(|c| c.is_alphanumeric() || c == '_')
+            .unwrap_or(false);
+        out.push_str(&rest[..pos]);
+        if before_word || after_word {
+            out.push_str("defined");
+        } else {
+            out.push_str("DEFINED");
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BreakCtx {
     Loop,
@@ -485,32 +512,48 @@ impl Parser {
         self.source_indent = token.indent;
         let text = token.text.trim();
         let rest = text.strip_prefix('#').unwrap_or(text).trim_start();
-        if let Some(def) = rest.strip_prefix("define") {
-            if !def.starts_with(char::is_whitespace) {
-                return;
+        let keyword_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let keyword = &rest[..keyword_end];
+        let args = rest[keyword_end..].trim();
+
+        match keyword {
+            "define" => {
+                let name_end = args
+                    .find(|c: char| c.is_whitespace() || c == '(')
+                    .unwrap_or(args.len());
+                let name = &args[..name_end];
+                if name.is_empty() {
+                    return;
+                }
+                if args[name_end..].starts_with('(') {
+                    // Function-like macros are not expanded by this heuristic.
+                    return;
+                }
+                let value = args[name_end..].trim();
+                self.blank();
+                if value.is_empty() {
+                    self.emit(format!("CONSTANT {name}"));
+                } else {
+                    self.emit(format!("CONSTANT {name} TO {value}"));
+                }
+                self.blank();
             }
-            let def = def.trim_start();
-            let name_end = def
-                .find(|c: char| c.is_whitespace() || c == '(')
-                .unwrap_or(def.len());
-            let name = &def[..name_end];
-            if name.is_empty() {
-                return;
+            "ifdef" | "ifndef" => {
+                let directive = keyword.to_uppercase();
+                if args.is_empty() {
+                    self.emit(format!("#{directive}"));
+                } else {
+                    self.emit(format!("#{directive} {args}"));
+                }
             }
-            if def[name_end..].starts_with('(') {
-                // Function-like macros are not expanded by this heuristic.
-                return;
+            "if" => self.emit(format!("#IF {}", uppercase_defined(args))),
+            "elif" => self.emit(format!("#ELIF {}", uppercase_defined(args))),
+            "else" => self.emit("#ELSE"),
+            "endif" => self.emit("#ENDIF"),
+            _ => {
+                // Other directives (#include, #pragma, ...) are intentionally ignored.
             }
-            let value = def[name_end..].trim();
-            self.blank();
-            if value.is_empty() {
-                self.emit(format!("CONSTANT {name}"));
-            } else {
-                self.emit(format!("CONSTANT {name} TO {value}"));
-            }
-            self.blank();
         }
-        // Other directives (#include, #if, ...) are intentionally ignored.
     }
 
     fn parse_function(&mut self) {
