@@ -70,6 +70,44 @@ if (a && !b) {
 }
 
 #[test]
+fn dangling_else_snippets() {
+    check(
+        r#"
+else if (x > 0) {
+    y = 1;
+}
+"#,
+        &["ELSE IF (x IS GREATER THAN 0)", "    SET y TO 1", "ENDIF"],
+    );
+
+    check(
+        r#"
+else if (x > 0) {
+    y = 1;
+} else {
+    y = 2;
+}
+"#,
+        &[
+            "ELSE IF (x IS GREATER THAN 0)",
+            "    SET y TO 1",
+            "ELSE",
+            "    SET y TO 2",
+            "ENDIF",
+        ],
+    );
+
+    check(
+        r#"
+else {
+    y = 2;
+}
+"#,
+        &["ELSE", "    SET y TO 2", "ENDIF"],
+    );
+}
+
+#[test]
 fn loops() {
     check(
         r#"

@@ -365,7 +365,8 @@ impl Parser {
         let text = self.peek_text();
         if matches!(
             text,
-            "if" | "while"
+            "if" | "else"
+                | "while"
                 | "for"
                 | "do"
                 | "switch"
@@ -868,10 +869,7 @@ impl Parser {
                 self.bump();
             }
             "if" => self.parse_if(),
-            "else" => {
-                self.error("unexpected 'else'");
-                self.bump();
-            }
+            "else" => self.parse_else(),
             "while" => self.parse_while(),
             "do" => self.parse_do(),
             "for" => self.parse_for(),
@@ -934,6 +932,29 @@ impl Parser {
         self.parse_body();
         self.indent -= 1;
         self.parse_if_tail(if_indent);
+    }
+
+    fn parse_else(&mut self) {
+        let else_indent = self.peek().map(|t| t.indent).unwrap_or(self.source_indent);
+        self.bump(); // else
+        self.source_indent = else_indent;
+        if self.check("if") {
+            self.bump();
+            let cond = self.parse_paren_expr();
+            self.source_indent = else_indent;
+            self.emit(format!("ELSE IF ({cond})"));
+            self.indent += 1;
+            self.parse_body();
+            self.indent -= 1;
+            self.parse_if_tail(else_indent);
+        } else {
+            self.emit("ELSE");
+            self.indent += 1;
+            self.parse_body();
+            self.indent -= 1;
+            self.source_indent = else_indent;
+            self.emit("ENDIF");
+        }
     }
 
     fn parse_if_tail(&mut self, if_indent: usize) {
