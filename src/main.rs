@@ -133,7 +133,7 @@ fn print_help() {
          cpseudo --rules <rules.txt> ...  load custom equivalents\n  \
          cpseudo --help                   show this help\n\n\
          GUI: paste C code on the left, or use Ctrl+V. \
-         Ctrl+Enter converts, Ctrl+Shift+C copies the result.\n\
+         Ctrl+Enter converts, Ctrl+Shift+C copies with bold keywords.\n\
          Custom equivalents: term INIT => DECLARE, \
          call printf => OUTPUT {{args}}, term TO => :="
     );
@@ -1023,8 +1023,7 @@ impl eframe::App for App {
             if self.tab == Tab::Grep {
                 self.copy_grep(&ctx, true);
             } else {
-                ctx.copy_text(self.output.clone());
-                self.status = "Pseudocode copied to clipboard".to_string();
+                self.copy_formatted(&ctx);
             }
         }
 
