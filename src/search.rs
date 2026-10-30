@@ -78,6 +78,25 @@ struct MatchRow {
     text: String,
 }
 
+fn rg_name() -> &'static str {
+    if cfg!(windows) { "rg.exe" } else { "rg" }
+}
+
+fn rg_program() -> PathBuf {
+    if let Some(path) = std::env::var_os("CPSEUDO_RG") {
+        return PathBuf::from(path);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(rg_name());
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from(rg_name())
+}
+
 pub fn run(options: &SearchOptions) -> Result<SearchResult, String> {
     if options.pattern.trim().is_empty() {
         return Err("Enter a search pattern first".to_string());
@@ -97,7 +116,7 @@ pub fn run(options: &SearchOptions) -> Result<SearchResult, String> {
         root.clone()
     };
 
-    let mut command = Command::new("rg");
+    let mut command = Command::new(rg_program());
     command
         .arg("--json")
         .arg("--line-number")
@@ -129,9 +148,13 @@ pub fn run(options: &SearchOptions) -> Result<SearchResult, String> {
     }
     command.arg("--").arg(&options.pattern).arg(&root);
 
-    let output = command
-        .output()
-        .map_err(|e| format!("Could not run ripgrep (rg): {e}"))?;
+    let output = command.output().map_err(|e| {
+        format!(
+            "Could not run ripgrep (rg): {e}\n\
+             Install ripgrep or place {} next to the app.",
+            rg_name()
+        )
+    })?;
 
     if output.status.code().unwrap_or(2) > 1 {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
