@@ -86,12 +86,12 @@ fn rg_program() -> PathBuf {
     if let Some(path) = std::env::var_os("CPSEUDO_RG") {
         return PathBuf::from(path);
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join(rg_name());
-            if candidate.is_file() {
-                return candidate;
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join(rg_name());
+        if candidate.is_file() {
+            return candidate;
         }
     }
     PathBuf::from(rg_name())
@@ -294,14 +294,28 @@ pub fn run(options: &SearchOptions) -> Result<SearchResult, String> {
             }
             let idx = m.line - 1;
             let directive_line = masked[idx].trim_start().starts_with('#');
-            let mut range = if options.expand_preprocessor {
+            let pp_range = if options.expand_preprocessor {
                 pp.expand(idx)
             } else {
                 None
             };
-            if range.is_none() && !directive_line && options.expand_control {
-                range = enclosing_control(&controls, idx).map(|b| (b.start, b.end));
-            }
+            let control_range = if !directive_line && options.expand_control {
+                enclosing_control(&controls, idx).map(|b| (b.start, b.end))
+            } else {
+                None
+            };
+            let range = match (pp_range, control_range) {
+                (Some(pp), Some(control)) => {
+                    if control.1 - control.0 <= pp.1 - pp.0 {
+                        Some(control)
+                    } else {
+                        Some(pp)
+                    }
+                }
+                (Some(pp), None) => Some(pp),
+                (None, Some(control)) => Some(control),
+                (None, None) => None,
+            };
             let structural = range.is_some() || directive_line;
             let (start, end) = range.unwrap_or((idx, idx));
             let (start, end) = if structural {
@@ -831,13 +845,34 @@ fn html_table(rows: &[Vec<String>]) -> String {
     for row in rows {
         out.push_str("<tr>");
         for cell in row {
-            out.push_str("<td style=\"white-space:pre-wrap;vertical-align:top\">");
-            out.push_str(&html_escape(cell).replace('\n', "<br>"));
+            out.push_str(
+                "<td style=\"white-space:pre-wrap;vertical-align:top;mso-data-placement:same-cell\">",
+            );
+            out.push_str(&html_cell(cell));
             out.push_str("</td>");
         }
         out.push_str("</tr>");
     }
     out.push_str("</table></body></html>");
+    out
+}
+
+fn html_cell(text: &str) -> String {
+    let mut out = String::new();
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push_str("<br style=\"mso-data-placement:same-cell\">");
+        }
+        let trimmed = line.trim_start_matches([' ', '\t']);
+        let indent = &line[..line.len() - trimmed.len()];
+        for c in indent.chars() {
+            match c {
+                '\t' => out.push_str("&nbsp;&nbsp;&nbsp;&nbsp;"),
+                _ => out.push_str("&nbsp;"),
+            }
+        }
+        out.push_str(&html_escape(trimmed));
+    }
     out
 }
 
@@ -899,6 +934,32 @@ mod tests {
     }
 
     #[test]
+    fn excel_html_keeps_block_in_one_cell_with_indentation() {
+        let result = SearchResult {
+            blocks: vec![BlockRow {
+                path: "\\sample.c".to_string(),
+                lines: "1, 3".to_string(),
+                start: 1,
+                end: 3,
+                block: "    if (function_enabled)\n        work();\n    }".to_string(),
+            }],
+            ..SearchResult::default()
+        };
+        let html = blocks_html(&result, false);
+        assert!(
+            html.contains("&nbsp;&nbsp;&nbsp;&nbsp;if (function_enabled)"),
+            "{html}"
+        );
+        assert!(
+            html.contains(
+                "<br style=\"mso-data-placement:same-cell\">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;work();"
+            ),
+            "{html}"
+        );
+        assert!(!html.contains("\n        work();"), "{html}");
+    }
+
+    #[test]
     fn input_and_return_type_paths_are_windows_style() {
         let base = Path::new("/work/root");
         let path = Path::new("/work/root/a/b.c");
@@ -941,5 +1002,35 @@ fn search_merges_preprocessor_and_if_else_blocks() {
     assert_eq!(result.blocks[0].lines, "3, 9");
     assert!(result.blocks[0].block.contains("#if defined(X)"));
     assert!(result.blocks[0].block.contains("two();"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn condition_match_prefers_if_else_block_over_preprocessor() {
+    let dir = std::env::temp_dir().join(format!(
+        "cpseudo-grep-test-condition-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sample.c");
+    fs::write(
+        &file,
+        "#if OUTER\nint a;\nint b;\n    if (function_enabled) {\n        work();\n    } else {\n        idle();\n    }\nint c;\n#endif\n",
+    )
+    .unwrap();
+
+    let options = SearchOptions {
+        root: dir.display().to_string(),
+        pattern: "function_enabled".to_string(),
+        windows_paths: true,
+        ..SearchOptions::default()
+    };
+    let result = run(&options).unwrap();
+    assert_eq!(result.blocks.len(), 1, "{:?}", result.blocks);
+    assert_eq!(result.blocks[0].lines, "4, 8");
+    assert!(!result.blocks[0].block.contains("#if OUTER"));
+    assert!(result.blocks[0].block.contains("if (function_enabled)"));
+    assert!(result.blocks[0].block.contains("idle();"));
     let _ = fs::remove_dir_all(&dir);
 }

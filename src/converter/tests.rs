@@ -540,3 +540,41 @@ fn pasted_snippet_indentation_is_retained() {
         "{code}"
     );
 }
+
+#[test]
+fn pasted_switch_cases_with_preprocessor_are_not_a_function() {
+    check(
+        r#"case MODE_ALPHA:
+case MODE_BETA:
+case MODE_GAMMA:
+#ifdef FEATURE_COLOR
+#ifdef FEATURE_ENVELOPE
+        if(selected_mode == MODE_ENVELOPE)
+        {
+            status = STATUS_ENABLED;
+        }
+#endif /* FEATURE_ENVELOPE */
+#endif /* FEATURE_COLOR */
+#ifndef FEATURE_EXTRA
+        status = STATUS_DISABLED;
+#endif /* FEATURE_EXTRA */
+        break;
+"#,
+        &[
+            "CASE MODE_ALPHA:",
+            "CASE MODE_BETA:",
+            "CASE MODE_GAMMA:",
+            "#IFDEF FEATURE_COLOR",
+            "#IFDEF FEATURE_ENVELOPE",
+            "        IF (selected_mode IS EQUAL TO MODE_ENVELOPE)",
+            "            SET status TO STATUS_ENABLED",
+            "        ENDIF",
+            "#ENDIF /* FEATURE_ENVELOPE */",
+            "#ENDIF /* FEATURE_COLOR */",
+            "#IFNDEF FEATURE_EXTRA",
+            "        SET status TO STATUS_DISABLED",
+            "#ENDIF /* FEATURE_EXTRA */",
+            "        BREAK",
+        ],
+    );
+}

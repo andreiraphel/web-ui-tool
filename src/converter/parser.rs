@@ -34,6 +34,15 @@ fn uppercase_defined(text: &str) -> String {
     out
 }
 
+fn with_trailing_comment(directive: &str, args: &str) -> String {
+    let args = args.trim();
+    if args.is_empty() {
+        directive.to_string()
+    } else {
+        format!("{directive} {args}")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BreakCtx {
     Loop,
@@ -374,6 +383,8 @@ impl Parser {
                 | "break"
                 | "continue"
                 | "goto"
+                | "case"
+                | "default"
                 | "{"
         ) {
             return true;
@@ -549,8 +560,8 @@ impl Parser {
             }
             "if" => self.emit(format!("#IF {}", uppercase_defined(args))),
             "elif" => self.emit(format!("#ELIF {}", uppercase_defined(args))),
-            "else" => self.emit("#ELSE"),
-            "endif" => self.emit("#ENDIF"),
+            "else" => self.emit(with_trailing_comment("#ELSE", args)),
+            "endif" => self.emit(with_trailing_comment("#ENDIF", args)),
             _ => {
                 // Other directives (#include, #pragma, ...) are intentionally ignored.
             }
@@ -902,9 +913,20 @@ impl Parser {
                 self.emit(format!("GOTO {label}"));
             }
             "typedef" => self.parse_typedef(),
-            "case" | "default" => {
-                self.error("'case'/'default' outside of a switch statement");
-                self.skip_statement();
+            "case" => {
+                let case_indent = self.peek().map(|t| t.indent).unwrap_or(self.source_indent);
+                self.bump();
+                let value = self.take_until_top_level(&[":"]);
+                self.expect(":");
+                self.source_indent = case_indent;
+                self.emit(format!("CASE {}:", format_expr(&value)));
+            }
+            "default" => {
+                let default_indent = self.peek().map(|t| t.indent).unwrap_or(self.source_indent);
+                self.bump();
+                self.expect(":");
+                self.source_indent = default_indent;
+                self.emit("DEFAULT:");
             }
             _ => {
                 if is_struct_like(&text) && self.struct_def_ahead() {
