@@ -146,31 +146,6 @@ pub(crate) fn join_type_declaration(type_name: &str, decl: &str) -> String {
     }
 }
 
-pub(crate) fn format_params(tokens: &[Token]) -> String {
-    let mut names = Vec::new();
-    for part in split_top_level(tokens, ",") {
-        if part.is_empty() {
-            continue;
-        }
-        if part.len() == 1 && part[0].text == "void" {
-            continue;
-        }
-        if part.iter().any(|t| t.text == "...") {
-            names.push("...".to_string());
-            continue;
-        }
-        let name = part
-            .iter()
-            .rev()
-            .find(|t| t.kind == Kind::Ident && !is_type_word(&t.text) && !is_qualifier(&t.text))
-            .map(|t| t.text.clone());
-        if let Some(name) = name {
-            names.push(name);
-        }
-    }
-    names.join(", ")
-}
-
 pub(crate) fn format_declarators(tokens: &[Token]) -> Vec<String> {
     let mut parts = Vec::new();
     let mut i = 0usize;
@@ -381,6 +356,19 @@ fn call_parts(tokens: &[Token]) -> Option<(&str, &[Token])> {
     Some((tokens[0].text.as_str(), &tokens[2..close]))
 }
 
+/// Recognize a leading C cast such as `(void)` and return its rendered text
+/// plus the index of its closing parenthesis.
+fn leading_cast(tokens: &[Token]) -> Option<(String, usize)> {
+    if tokens.first()?.text != "(" {
+        return None;
+    }
+    let close = matching_close(tokens, 0, "(", ")")?;
+    if close + 1 >= tokens.len() || !is_cast_type(&tokens[1..close]) {
+        return None;
+    }
+    Some((format_expr(&tokens[..=close]), close))
+}
+
 pub(crate) fn clean_string_literal(raw: &str) -> String {
     let inner = raw
         .strip_prefix('"')
@@ -419,110 +407,11 @@ fn printable_expr(tokens: &[Token]) -> String {
     }
 }
 
-fn format_special_call(tokens: &[Token], rules: &Rules) -> Option<String> {
+fn format_rule_call(tokens: &[Token], rules: &Rules) -> Option<String> {
     let (name, arg_tokens) = call_parts(tokens)?;
+    let rule = rules.call_rule(name)?;
     let args = split_top_level(arg_tokens, ",");
-    if let Some(rule) = rules.call_rule(name) {
-        return Some(apply_call_template(rule, &args));
-    }
-    match name {
-        "printf" => {
-            let mut parts = Vec::new();
-            let mut start = 0usize;
-            if let Some(first) = args.first()
-                && first.len() == 1
-                && first[0].kind == Kind::Str
-            {
-                let cleaned = clean_string_literal(&first[0].text);
-                if !cleaned.is_empty() {
-                    parts.push(format!("\"{cleaned}\""));
-                }
-                start = 1;
-            }
-            for arg in args.iter().skip(start) {
-                let formatted = format_expr(arg);
-                if !formatted.is_empty() {
-                    parts.push(formatted);
-                }
-            }
-            Some(if parts.is_empty() {
-                "PRINT".to_string()
-            } else {
-                format!("PRINT {}", parts.join(", "))
-            })
-        }
-        "scanf" => {
-            let mut start = 0usize;
-            if args
-                .first()
-                .map(|a| a.len() == 1 && a[0].kind == Kind::Str)
-                .unwrap_or(false)
-            {
-                start = 1;
-            }
-            let mut targets = Vec::new();
-            for arg in args.iter().skip(start) {
-                let mut formatted = format_expr(arg);
-                if let Some(rest) = formatted.strip_prefix('&') {
-                    formatted = rest.trim_start().to_string();
-                }
-                if !formatted.is_empty() {
-                    targets.push(formatted);
-                }
-            }
-            Some(if targets.is_empty() {
-                "READ".to_string()
-            } else {
-                format!("READ {}", targets.join(", "))
-            })
-        }
-        "gets" => {
-            let target = args.first().map(|a| format_expr(a)).unwrap_or_default();
-            Some(if target.is_empty() {
-                "READ".to_string()
-            } else {
-                format!("READ {target}")
-            })
-        }
-        "puts" => {
-            let arg = args.first().map(|a| printable_expr(a)).unwrap_or_default();
-            Some(if arg.is_empty() {
-                "PRINT".to_string()
-            } else {
-                format!("PRINT {arg}")
-            })
-        }
-        "putchar" => {
-            let arg = args.first().map(|a| format_expr(a)).unwrap_or_default();
-            Some(if arg.is_empty() {
-                "PRINT".to_string()
-            } else {
-                format!("PRINT {arg}")
-            })
-        }
-        "getchar" => Some("READ CHARACTER".to_string()),
-        "assert" => {
-            let arg = args.first().map(|a| format_expr(a)).unwrap_or_default();
-            Some(format!("ASSERT {arg}"))
-        }
-        "exit" => {
-            let arg = args.first().map(|a| format_expr(a)).unwrap_or_default();
-            Some(if arg.is_empty() {
-                "EXIT".to_string()
-            } else {
-                format!("EXIT {arg}")
-            })
-        }
-        "free" => {
-            let arg = args.first().map(|a| format_expr(a)).unwrap_or_default();
-            Some(if arg.is_empty() {
-                "FREE".to_string()
-            } else {
-                format!("FREE {arg}")
-            })
-        }
-        _ => None,
-    }
+    Some(apply_call_template(rule, &args))
 }
 
 fn apply_call_template(rule: &CallRule, args: &[&[Token]]) -> String {
@@ -602,7 +491,17 @@ pub(crate) fn format_inline(tokens: &[Token], call_prefix: bool, rules: &Rules) 
     if let Some(line) = format_increment(tokens) {
         return Some(line);
     }
-    if let Some(line) = format_special_call(tokens, rules) {
+    if let Some((cast, close)) = leading_cast(tokens) {
+        let tail = &tokens[close + 1..];
+        if let Some(line) = format_rule_call(tail, rules) {
+            return Some(line);
+        }
+        if call_prefix && let Some((name, args)) = call_parts(tail) {
+            let args = format_expr(args);
+            return Some(format!("CALL {cast}{name}({args})"));
+        }
+    }
+    if let Some(line) = format_rule_call(tokens, rules) {
         return Some(line);
     }
     if call_prefix && let Some((name, args)) = call_parts(tokens) {

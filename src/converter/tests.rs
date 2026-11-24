@@ -156,19 +156,35 @@ int main(int argc, char **argv) {
 }
 "#,
         &[
-            "FUNCTION add(a, b) RETURNS int",
             "    RETURN a + b",
-            "END FUNCTION",
             "",
-            "FUNCTION greet()",
-            "    PRINT \"Hello, %s!\\n\", \"world\"",
+            "    CALL printf(\"Hello, %s!\\n\", \"world\")",
             "    RETURN",
-            "END FUNCTION",
             "",
-            "FUNCTION main(argc, argv)",
             "    INIT int x TO add(1, 2)",
             "    RETURN 0",
-            "END FUNCTION",
+        ],
+    );
+}
+
+#[test]
+fn casted_calls_keep_the_cast_and_get_call_prefix() {
+    check(
+        r#"
+void f(void) {
+    (void)functionCall();
+    functionCall();
+    (void)other(1, 2);
+    (void)printf("hi");
+    printf("hi");
+}
+"#,
+        &[
+            "    CALL (void)functionCall()",
+            "    CALL functionCall()",
+            "    CALL (void)other(1, 2)",
+            "    CALL (void)printf(\"hi\")",
+            "    CALL printf(\"hi\")",
         ],
     );
 }
@@ -192,14 +208,14 @@ switch (op) {
         &[
             "SWITCH (op)",
             "CASE 1:",
-            "    PRINT \"one\"",
+            "    CALL printf(\"one\")",
             "    BREAK",
             "CASE 2:",
             "CASE 3:",
-            "    PRINT \"many\"",
+            "    CALL puts(\"many\")",
             "    BREAK",
             "DEFAULT:",
-            "    READ x",
+            "    CALL scanf(\"%d\", &x)",
         ],
     );
 }
@@ -285,11 +301,9 @@ void f(struct Node *n, int v) {
             "    INIT struct Node *next",
             "END STRUCT",
             "",
-            "FUNCTION f(n, v)",
             "    SET n->value TO v",
             "    SET (*n).next TO NULL",
             "    SET n->next->value TO v",
-            "END FUNCTION",
         ],
     );
 }
@@ -318,10 +332,8 @@ int main(void) {
             "",
             "CONSTANT DEBUG",
             "",
-            "FUNCTION main()",
             "    RETURN LIMIT",
             "    // trailing",
-            "END FUNCTION",
         ],
     );
 }
@@ -404,27 +416,24 @@ fn bundled_example_converts_cleanly() {
     assert!(
         conversion
             .code
-            .contains("FUNCTION factorial(n) RETURNS int")
+            .contains("IF (n IS LESS THAN OR EQUAL TO 1)")
     );
-    assert!(conversion.code.contains("FUNCTION main()"));
     assert!(conversion.code.contains("SWITCH (choice)"));
-    assert!(conversion.code.contains("END FUNCTION"));
+    assert!(!conversion.code.contains("FUNCTION"));
 }
 
 #[test]
 fn custom_term_and_text_rules() {
     use super::Rules;
     let (rules, errors) = Rules::from_text(
-        "term FUNCTION => PROCEDURE\nterm PRINT => OUTPUT\nterm TO => :=\nterm NULL => NIL\n",
+        "call printf => PRINT {args}\nterm INIT => DECLARE\nterm PRINT => OUTPUT\nterm TO => :=\nterm NULL => NIL\n",
     );
     assert!(errors.is_empty(), "{errors:?}");
 
     let source = r#"int f(void) { int x = NULL; printf("<- null\n"); return 0; }"#;
     let code = super::convert_with_rules(source, &rules).code;
 
-    assert!(code.contains("PROCEDURE f()"), "{code}");
-    assert!(code.contains("END PROCEDURE"), "{code}");
-    assert!(code.contains("INIT int x := NIL"), "{code}");
+    assert!(code.contains("DECLARE int x := NIL"), "{code}");
     assert!(code.contains("OUTPUT \"<- null\\n\""), "{code}");
 }
 
@@ -448,7 +457,7 @@ void f(void) {
     assert!(code.contains("OUTPUT \"x=%d\", 42"), "{code}");
     assert!(code.contains("LOG value, \"tag\""), "{code}");
     assert!(code.contains("SHOW \"a\", 1"), "{code}");
-    assert!(code.contains("PRINT \"hi\""), "{code}");
+    assert!(code.contains("CALL puts(\"hi\")"), "{code}");
 }
 
 #[test]

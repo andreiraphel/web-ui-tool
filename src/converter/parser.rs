@@ -2,7 +2,7 @@
 
 use super::format::{
     declarator_start, find_top_level, format_declarators, format_expr, format_for_part,
-    format_inline, format_params, format_type, join_type_declaration, matching_close,
+    format_inline, format_type, join_type_declaration, matching_close,
 };
 use super::rules::Rules;
 use super::{ConvertError, Kind, Token, is_qualifier, is_struct_like, is_type_word};
@@ -569,7 +569,6 @@ impl Parser {
     }
 
     fn parse_function(&mut self) {
-        let function_indent = self.peek().map(|t| t.indent).unwrap_or(self.source_indent);
         let open = match self.find_first_top_level_paren() {
             Some(i) if i > self.pos => i,
             _ => {
@@ -578,12 +577,6 @@ impl Parser {
                 return;
             }
         };
-        let name_idx = (self.pos..open)
-            .rev()
-            .find(|&i| self.tokens[i].kind == Kind::Ident && !is_type_word(&self.tokens[i].text))
-            .unwrap_or(open - 1);
-        let name = self.tokens[name_idx].text.clone();
-        let return_type = format_type(&self.tokens[self.pos..name_idx]);
         let close = match matching_close(&self.tokens, open, "(", ")") {
             Some(c) => c,
             None => {
@@ -592,13 +585,7 @@ impl Parser {
                 return;
             }
         };
-        let params = format_params(&self.tokens[open + 1..close]);
         self.pos = close + 1;
-
-        let mut header = format!("FUNCTION {name}({params})");
-        if !return_type.is_empty() && return_type != "void" && name != "main" {
-            header.push_str(&format!(" RETURNS {return_type}"));
-        }
 
         if self.check(";") {
             self.bump();
@@ -610,13 +597,7 @@ impl Parser {
         }
 
         self.blank();
-        self.source_indent = function_indent;
-        self.emit(header);
-        self.indent += 1;
         self.parse_body();
-        self.indent -= 1;
-        self.source_indent = function_indent;
-        self.emit("END FUNCTION");
         self.blank();
     }
 
