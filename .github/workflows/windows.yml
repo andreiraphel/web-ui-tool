@@ -18,10 +18,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release
-        run: cargo build --release
-
-      - name: Bundle ripgrep
+      - name: Fetch ripgrep for embedding
         shell: pwsh
         run: |
           $version = "14.1.1"
@@ -29,17 +26,28 @@ jobs:
           $url = "https://github.com/BurntSushi/ripgrep/releases/download/$version/ripgrep-$version-x86_64-pc-windows-msvc.zip"
           Invoke-WebRequest -Uri $url -OutFile $zip
           Expand-Archive -Path $zip -DestinationPath rg
-          Copy-Item "rg/ripgrep-$version-x86_64-pc-windows-msvc/rg.exe" "target/release/rg.exe"
-          Compress-Archive -Path "target/release/cpseudo.exe","target/release/rg.exe" -DestinationPath "cpseudo-windows.zip"
+          New-Item -ItemType Directory -Force -Path vendor | Out-Null
+          Copy-Item "rg/ripgrep-$version-x86_64-pc-windows-msvc/rg.exe" "vendor/rg.exe"
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path "target/release/cpseudo.exe" -DestinationPath "cpseudo-windows.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: cpseudo-windows
-          path: cpseudo-windows.zip
+          path: |
+            cpseudo-windows.zip
+            target/release/cpseudo.exe
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: cpseudo-windows.zip
+          files: |
+            cpseudo-windows.zip
+            target/release/cpseudo.exe

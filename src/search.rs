@@ -82,9 +82,18 @@ fn rg_name() -> &'static str {
     if cfg!(windows) { "rg.exe" } else { "rg" }
 }
 
+#[cfg(cpseudo_bundled_rg)]
+static BUNDLED_RG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rg.exe"));
+
 fn rg_program() -> PathBuf {
     if let Some(path) = std::env::var_os("CPSEUDO_RG") {
         return PathBuf::from(path);
+    }
+    #[cfg(cpseudo_bundled_rg)]
+    {
+        if let Some(path) = bundled_rg_program() {
+            return path;
+        }
     }
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
@@ -95,6 +104,75 @@ fn rg_program() -> PathBuf {
         }
     }
     PathBuf::from(rg_name())
+}
+
+#[cfg(cpseudo_bundled_rg)]
+fn bundled_rg_program() -> Option<PathBuf> {
+    use std::sync::OnceLock;
+
+    static CACHED: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CACHED.get_or_init(extract_bundled_rg).clone()
+}
+
+#[cfg(cpseudo_bundled_rg)]
+fn extract_bundled_rg() -> Option<PathBuf> {
+    let dir = rg_cache_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+
+    let hash = bytes_hash(BUNDLED_RG);
+    let name = match rg_name().strip_suffix(".exe") {
+        Some(stem) => format!("{stem}-{hash:016x}.exe"),
+        None => format!("{}-{hash:016x}", rg_name()),
+    };
+    let path = dir.join(name);
+    if path.is_file() {
+        return Some(path);
+    }
+
+    let temp = dir.join(format!(".{}.{}.tmp", rg_name(), std::process::id()));
+    std::fs::write(&temp, BUNDLED_RG).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755));
+    }
+    if std::fs::rename(&temp, &path).is_err() {
+        let _ = std::fs::remove_file(&temp);
+        return path.is_file().then_some(path);
+    }
+    Some(path)
+}
+
+#[cfg(cpseudo_bundled_rg)]
+fn rg_cache_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+            return Some(PathBuf::from(base).join("cpseudo").join("bin"));
+        }
+    }
+    if let Some(base) = std::env::var_os("XDG_CACHE_HOME") {
+        return Some(PathBuf::from(base).join("cpseudo").join("bin"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(
+            PathBuf::from(home)
+                .join(".cache")
+                .join("cpseudo")
+                .join("bin"),
+        );
+    }
+    Some(std::env::temp_dir().join("cpseudo").join("bin"))
+}
+
+#[cfg(cpseudo_bundled_rg)]
+fn bytes_hash(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 pub fn run(options: &SearchOptions) -> Result<SearchResult, String> {
@@ -151,7 +229,7 @@ pub fn run(options: &SearchOptions) -> Result<SearchResult, String> {
     let output = command.output().map_err(|e| {
         format!(
             "Could not run ripgrep (rg): {e}\n\
-             Install ripgrep or place {} next to the app.",
+             Install ripgrep, set CPSEUDO_RG, or place {} next to the app.",
             rg_name()
         )
     })?;
@@ -896,6 +974,18 @@ mod tests {
 
     fn lines(text: &str) -> Vec<String> {
         text.lines().map(|s| s.to_string()).collect()
+    }
+
+    #[cfg(cpseudo_bundled_rg)]
+    #[test]
+    fn bundled_ripgrep_is_extracted_and_runs() {
+        let path = bundled_rg_program().expect("extract bundled ripgrep");
+        assert!(path.is_file(), "{}", path.display());
+        let output = std::process::Command::new(&path)
+            .arg("--version")
+            .output()
+            .expect("run bundled ripgrep");
+        assert!(output.status.success());
     }
 
     #[test]
